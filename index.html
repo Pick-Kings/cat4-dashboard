@@ -4,12 +4,12 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>CAT4 Progress Dashboard</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body, #root { height: 100%; }
@@ -18,11 +18,12 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0f1117; }
     ::-webkit-scrollbar-thumb { background: #2a3050; border-radius: 3px; }
+    #loading { display:flex; align-items:center; justify-content:center; height:100vh; color:#64748b; font-size:14px; }
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel">
+  <div id="root"><div id="loading">Loading CAT4 Dashboard…</div></div>
+  <script id="app-code" type="text/babel" data-type="module" data-presets="react,env">
     const { useState, useCallback, useMemo, useRef, useEffect } = React;
     const {
       LineChart, Line, RadarChart, Radar, PolarGrid, PolarAngleAxis,
@@ -481,35 +482,20 @@ const STORAGE_KEY = "cat4-dashboard-rows";
 
 async function saveToStorage(rows) {
   try {
-    // Split into chunks to avoid localStorage 5MB limit
-    const str = JSON.stringify(rows);
-    const chunkSize = 500000;
-    const chunks = Math.ceil(str.length / chunkSize);
-    localStorage.setItem(STORAGE_KEY + '_chunks', String(chunks));
-    for (let i = 0; i < chunks; i++) {
-      localStorage.setItem(STORAGE_KEY + '_' + i, str.slice(i * chunkSize, (i+1) * chunkSize));
-    }
+    await window.storage.set(STORAGE_KEY, JSON.stringify(rows));
   } catch(e) { console.warn("Storage save failed:", e); }
 }
 
 async function loadFromStorage() {
   try {
-    const chunks = parseInt(localStorage.getItem(STORAGE_KEY + '_chunks') || '0');
-    if (!chunks) return null;
-    let str = '';
-    for (let i = 0; i < chunks; i++) {
-      str += localStorage.getItem(STORAGE_KEY + '_' + i) || '';
-    }
-    return str ? JSON.parse(str) : null;
-  } catch(e) { return null; }
+    const result = await window.storage.get(STORAGE_KEY);
+    if (result && result.value) return JSON.parse(result.value);
+  } catch(e) { /* key doesn't exist yet */ }
+  return null;
 }
 
 async function clearStorage() {
-  try {
-    const chunks = parseInt(localStorage.getItem(STORAGE_KEY + '_chunks') || '0');
-    for (let i = 0; i < chunks; i++) localStorage.removeItem(STORAGE_KEY + '_' + i);
-    localStorage.removeItem(STORAGE_KEY + '_chunks');
-  } catch(e) {}
+  try { await window.storage.delete(STORAGE_KEY); } catch(e) {}
 }
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
@@ -858,8 +844,30 @@ function CAT4Dashboard() {
 }
 
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(React.createElement(CAT4Dashboard));
+    const container = document.getElementById('root');
+    const reactRoot = ReactDOM.createRoot(container);
+    reactRoot.render(React.createElement(CAT4Dashboard));
+  </script>
+  <script>
+    // Ensure Babel processes the script after all CDN scripts load
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var loading = document.getElementById('loading');
+        if (loading && root.children.length <= 1) {
+          // Babel may not have run - try manual trigger
+          try {
+            Babel.transformScriptTags();
+          } catch(e) {
+            console.error('Babel transform failed:', e);
+            root.innerHTML = '<div style="color:#f87171;padding:40px;font-family:sans-serif">' +
+              '<h2 style="margin-bottom:12px">⚠️ Dashboard failed to load</h2>' +
+              '<p>Error: ' + e.message + '</p>' +
+              '<p style="margin-top:8px;color:#94a3b8">Please try opening in Chrome or Edge browser.</p></div>';
+          }
+        }
+      }, 1500);
+    });
   </script>
 </body>
 </html>
