@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CAT4 Progress Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { background: #0f1117; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+    button { font-family: inherit; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f1117; }
+    ::-webkit-scrollbar-thumb { background: #2a3050; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useCallback, useMemo, useRef, useEffect } = React;
+    const {
+      LineChart, Line, RadarChart, Radar, PolarGrid, PolarAngleAxis,
+      PolarRadiusAxis, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+      Tooltip, Legend, ResponsiveContainer, ReferenceLine
+    } = Recharts;
+
+import {
+  LineChart, Line, RadarChart, Radar, PolarGrid, PolarAngleAxis,
+  PolarRadiusAxis, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, ResponsiveContainer, ReferenceLine
+} from "recharts";
+
+// ── Palette ──────────────────────────────────────────────────────────────────
+const C = {
+  bg:"#0f1117", surface:"#181c27", card:"#1e2333", border:"#2a3050",
+  accent:"#5b8dee", accentSoft:"#3d5fad22",
+  green:"#4ade80", amber:"#fbbf24", rose:"#f87171",
+  verbal:"#818cf8", nonVerbal:"#34d399", spatial:"#fb923c", quant:"#f472b6",
+  text:"#e2e8f0", muted:"#64748b", mutedLight:"#94a3b8",
+};
+
+const DOMAINS = ["Verbal","Non-Verbal","Spatial","Quantitative"];
+const DOMAIN_COLORS = [C.verbal, C.nonVerbal, C.spatial, C.quant];
+const STANINE_LABEL = ["","Very Low","Very Low","Below Avg","Below Avg","Average","Above Avg","Above Avg","High","Very High"];
+const NATIONAL_NORM = { Verbal:100,"Non-Verbal":100,Spatial:100,Quantitative:100 };
+
+// Sort year groups naturally: Year 1 < Year 2 … < Year 13 < other
+function yearSortKey(y) {
+  const m = String(y).match(/(\d+)/);
+  return m ? parseInt(m[1]) : 999;
+}
+
+// ── Sample data ───────────────────────────────────────────────────────────────
+const SAMPLE_DATA = [
+  { id:"S001",name:"Aisha Rahman",   currentYear:"Year 7", testDate:"2021-09-15",Verbal:112,"Non-Verbal":118,Spatial:109,Quantitative:115 },
+  { id:"S001",name:"Aisha Rahman",   currentYear:"Year 9", testDate:"2023-09-12",Verbal:120,"Non-Verbal":124,Spatial:116,Quantitative:121 },
+  { id:"S002",name:"Ben Hartley",    currentYear:"Year 7", testDate:"2021-09-15",Verbal:98, "Non-Verbal":104,Spatial:112,Quantitative:100 },
+  { id:"S002",name:"Ben Hartley",    currentYear:"Year 9", testDate:"2023-09-12",Verbal:103,"Non-Verbal":108,Spatial:118,Quantitative:107 },
+  { id:"S003",name:"Clara Müller",   currentYear:"Year 8", testDate:"2022-09-14",Verbal:126,"Non-Verbal":119,Spatial:105,Quantitative:122 },
+  { id:"S003",name:"Clara Müller",   currentYear:"Year 10",testDate:"2024-09-10",Verbal:131,"Non-Verbal":125,Spatial:110,Quantitative:128 },
+  { id:"S004",name:"David Osei",     currentYear:"Year 7", testDate:"2022-09-14",Verbal:88, "Non-Verbal":95, Spatial:93, Quantitative:90  },
+  { id:"S004",name:"David Osei",     currentYear:"Year 9", testDate:"2024-09-10",Verbal:94, "Non-Verbal":101,Spatial:99, Quantitative:96  },
+  { id:"S005",name:"Emma Johansson", currentYear:"Year 9", testDate:"2022-09-14",Verbal:115,"Non-Verbal":110,Spatial:120,Quantitative:108 },
+  { id:"S005",name:"Emma Johansson", currentYear:"Year 11",testDate:"2024-09-10",Verbal:119,"Non-Verbal":114,Spatial:127,Quantitative:112 },
+  { id:"S006",name:"Faris Al-Amin",  currentYear:"Year 8", testDate:"2021-09-15",Verbal:107,"Non-Verbal":113,Spatial:116,Quantitative:119 },
+  { id:"S006",name:"Faris Al-Amin",  currentYear:"Year 10",testDate:"2023-09-12",Verbal:112,"Non-Verbal":117,Spatial:122,Quantitative:125 },
+  // No-CAT4 sample
+  { id:"S007",name:"Grace Lee",      currentYear:"Year 7", testDate:null,Verbal:null,"Non-Verbal":null,Spatial:null,Quantitative:null },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function ssToStanine(ss) {
+  if (ss>=126)return 9;if(ss>=119)return 8;if(ss>=112)return 7;
+  if(ss>=104)return 6;if(ss>=97)return 5;if(ss>=89)return 4;
+  if(ss>=82)return 3;if(ss>=74)return 2;return 1;
+}
+function meanSS(row) {
+  const v = DOMAINS.map(d=>row[d]).filter(x=>x!==null&&!isNaN(x));
+  return v.length ? Math.round(v.reduce((a,b)=>a+b,0)/v.length) : 0;
+}
+function hasCAT4(row) {
+  return DOMAINS.some(d => row[d] !== null && !isNaN(row[d]));
+}
+function trend(rows) {
+  const valid = rows.filter(r=>hasCAT4(r));
+  if (valid.length < 2) return null;
+  const s = [...valid].sort((a,b)=>new Date(a.testDate)-new Date(b.testDate));
+  return meanSS(s[s.length-1]) - meanSS(s[0]);
+}
+function bandColor(ss) { return ss>=112?C.green:ss>=97?C.amber:C.rose; }
+function formatDate(d) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  return isNaN(dt)?String(d):dt.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+}
+
+// ── Column normaliser ─────────────────────────────────────────────────────────
+function normaliseRow(r) {
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g,"");
+  const get = (...keys) => {
+    for (const k of keys) {
+      const found = Object.keys(r).find(rk=>norm(rk)===norm(k));
+      if (found!==undefined && r[found]!=="" && r[found]!==undefined) return r[found];
+    }
+    return undefined;
+  };
+  const firstname = get("firstname","forename","givenname");
+  const lastname  = get("lastname","surname","familyname");
+  const fullname  = get("name","studentname","pupilname","fullname","student");
+  const name = (firstname&&lastname) ? `${firstname} ${lastname}`.trim()
+             : (firstname||lastname||fullname||null);
+  if (!name) return null;
+
+  const rawDate = get("cat4dateoftest","dateoftest","testdate","date","examdate","assessmentdate","sittingdate");
+  const currentYear = get("currentyear","currentyeargroup","yeargroup","year","schoolyear","class","form","yearlevel");
+
+  const Verbal       = parseFloat(get("cat4verbalsas","verbal","verbalsas","verbalscore","ver","vsas"));
+  const NonVerbal    = parseFloat(get("cat4nonverbalsas","nonverbal","nonverbalsas","nonverbalscore","nv","nvsas","nonverbalfigural"));
+  const Spatial      = parseFloat(get("cat4spatialsas","spatial","spatialsas","spatialscore","spa"));
+  const Quantitative = parseFloat(get("cat4quantitativesas","quantitative","quantitativesas","quantitativescore","quant","qsas"));
+
+  const id = get("twuniqueid","id","studentid","pupilid","admissionnumber","upn","candidateid") || name;
+
+  let testDate = rawDate ? String(rawDate) : null;
+  if (testDate && !isNaN(testDate) && Number(testDate)>1000) {
+    try { const d=XLSX.SSF.parse_date_code(Number(testDate)); testDate=`${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`; } catch(e){}
+  } else if (testDate && /^\d{2}\/\d{2}\/\d{4}$/.test(testDate)) {
+    const [dd,mm,yyyy]=testDate.split("/"); testDate=`${yyyy}-${mm}-${dd}`;
+  }
+
+  return {
+    id: String(id), name: String(name),
+    currentYear: currentYear ? String(currentYear) : "Unknown",
+    testDate: testDate || null,
+    Verbal:       isNaN(Verbal)?null:Verbal,
+    "Non-Verbal": isNaN(NonVerbal)?null:NonVerbal,
+    Spatial:      isNaN(Spatial)?null:Spatial,
+    Quantitative: isNaN(Quantitative)?null:Quantitative,
+  };
+}
+
+function parseOneFile(file) {
+  return new Promise(resolve => {
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (ext==="csv") {
+      Papa.parse(file,{ header:true,skipEmptyLines:true,
+        complete:r=>resolve({ rows:r.data.map(normaliseRow).filter(Boolean), rawCols:r.meta?.fields||[] })});
+    } else {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const wb=XLSX.read(e.target.result,{type:"array"});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const raw=XLSX.utils.sheet_to_json(ws,{defval:"",raw:true});
+        resolve({ rows:raw.map(normaliseRow).filter(Boolean), rawCols:raw.length?Object.keys(raw[0]):[] });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  });
+}
+
+async function parseMultipleFiles(files) {
+  const batches = await Promise.all(Array.from(files).map(parseOneFile));
+  const allCols = [...new Set(batches.flatMap(b=>b.rawCols))];
+  const flat = batches.flatMap(b=>b.rows);
+  const seen = new Set();
+  const deduped = flat.filter(r=>{ const k=`${r.id}__${r.testDate}`; if(seen.has(k))return false; seen.add(k);return true; });
+  return { rows:deduped, detectedCols:allCols };
+}
+
+function cohortLiveAverages(rows) {
+  const avg={};
+  DOMAINS.forEach(d=>{ const v=rows.map(r=>r[d]).filter(x=>x!==null&&!isNaN(x)); avg[d]=v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):100; });
+  return avg;
+}
+
+// ── UI atoms ──────────────────────────────────────────────────────────────────
+function StatPill({label,value,color,sub}) {
+  return (
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 16px",display:"flex",flexDirection:"column",gap:2,minWidth:94}}>
+      <span style={{fontSize:11,color:C.muted,letterSpacing:"0.05em",textTransform:"uppercase"}}>{label}</span>
+      <span style={{fontSize:22,fontWeight:700,color:color||C.text,fontFamily:"'DM Mono',monospace"}}>{value}</span>
+      {sub&&<span style={{fontSize:10,color:C.muted}}>{sub}</span>}
+    </div>
+  );
+}
+function TrendBadge({delta}) {
+  if (delta===null) return <span style={{color:C.muted,fontSize:12}}>–</span>;
+  return <span style={{color:delta>=0?C.green:C.rose,fontWeight:700,fontSize:13}}>{delta>=0?"▲":"▼"} {Math.abs(delta)}</span>;
+}
+function Toggle({value,onChange,options}) {
+  return (
+    <div style={{display:"flex",background:C.bg,border:`1px solid ${C.border}`,borderRadius:20,padding:3,gap:2}}>
+      {options.map(o=>(
+        <button key={o.value} onClick={()=>onChange(o.value)} style={{padding:"5px 14px",borderRadius:16,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:value===o.value?C.accent:"transparent",color:value===o.value?"#fff":C.muted,transition:"all 0.15s"}}>{o.label}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+function RadarProfile({rows,benchmark,benchmarkLabel}) {
+  const latest=[...rows].sort((a,b)=>new Date(b.testDate)-new Date(a.testDate))[0];
+  const data=DOMAINS.map(d=>({domain:d,Student:latest[d]||0,[benchmarkLabel]:benchmark[d]||100}));
+  return (
+    <ResponsiveContainer width="100%" height={230}>
+      <RadarChart data={data} outerRadius={80}>
+        <PolarGrid stroke={C.border}/>
+        <PolarAngleAxis dataKey="domain" tick={{fill:C.muted,fontSize:11}}/>
+        <PolarRadiusAxis domain={[70,140]} tick={false} axisLine={false}/>
+        <Radar name="Student" dataKey="Student" stroke={C.accent} fill={C.accent} fillOpacity={0.28}/>
+        <Radar name={benchmarkLabel} dataKey={benchmarkLabel} stroke={C.amber} fill={C.amber} fillOpacity={0.1} strokeDasharray="4 3"/>
+        <Legend wrapperStyle={{fontSize:11,color:C.muted}}/>
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+}
+function TimelineChart({rows,benchmark}) {
+  const sorted=[...rows].filter(r=>hasCAT4(r)).sort((a,b)=>new Date(a.testDate)-new Date(b.testDate));
+  const bAvg=Math.round(DOMAINS.reduce((a,d)=>a+(benchmark[d]||100),0)/4);
+  return (
+    <ResponsiveContainer width="100%" height={210}>
+      <LineChart data={sorted.map(r=>({...r,label:formatDate(r.testDate)}))} margin={{top:4,right:12,left:-10,bottom:0}}>
+        <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+        <XAxis dataKey="label" tick={{fill:C.muted,fontSize:10}}/>
+        <YAxis domain={[70,145]} tick={{fill:C.muted,fontSize:11}}/>
+        <Tooltip contentStyle={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}}/>
+        <ReferenceLine y={bAvg} stroke={C.amber} strokeDasharray="5 3" label={{value:"Benchmark",fill:C.amber,fontSize:10,position:"insideTopRight"}}/>
+        {DOMAINS.map((d,i)=><Line key={d} type="monotone" dataKey={d} stroke={DOMAIN_COLORS[i]} strokeWidth={2} dot={{r:4,fill:DOMAIN_COLORS[i]}} name={d} connectNulls/>)}
+        <Legend wrapperStyle={{fontSize:11,color:C.muted}}/>
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+function CohortBar({students,benchmark,benchmarkLabel}) {
+  const data=DOMAINS.map(d=>{
+    const vals=students.map(st=>{const l=[...st.rows].filter(r=>hasCAT4(r)).sort((a,b)=>new Date(b.testDate)-new Date(a.testDate))[0];return l?l[d]:null;}).filter(v=>v!==null&&!isNaN(v));
+    return {domain:d,"Cohort Avg":vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):0,[benchmarkLabel]:benchmark[d]||100};
+  });
+  return (
+    <ResponsiveContainer width="100%" height={210}>
+      <BarChart data={data} margin={{top:4,right:12,left:-10,bottom:0}}>
+        <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+        <XAxis dataKey="domain" tick={{fill:C.muted,fontSize:11}}/>
+        <YAxis domain={[80,140]} tick={{fill:C.muted,fontSize:11}}/>
+        <Tooltip contentStyle={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}}/>
+        <Bar dataKey="Cohort Avg" fill={C.accent} radius={[4,4,0,0]}/>
+        <Bar dataKey={benchmarkLabel} fill={C.amber} radius={[4,4,0,0]} opacity={0.65}/>
+        <Legend wrapperStyle={{fontSize:11,color:C.muted}}/>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ── Upload zone ───────────────────────────────────────────────────────────────
+function UploadZone({onFiles,fileCount}) {
+  const [drag,setDrag]=useState(false);
+  const ref=useRef();
+  return (
+    <div style={{border:`2px dashed ${drag?C.accent:C.border}`,borderRadius:12,padding:"16px 12px",textAlign:"center",cursor:"pointer",background:drag?C.accentSoft:"transparent",transition:"all 0.15s"}}
+      onClick={()=>ref.current.click()}
+      onDragOver={e=>{e.preventDefault();setDrag(true);}}
+      onDragLeave={()=>setDrag(false)}
+      onDrop={e=>{e.preventDefault();setDrag(false);onFiles(e.dataTransfer.files);}}>
+      <div style={{fontSize:18,marginBottom:2}}>📂</div>
+      <div style={{fontSize:11,color:C.accent,fontWeight:600}}>Drop or click to upload</div>
+      <div style={{fontSize:10,color:C.muted,marginTop:2}}>CSV / Excel · multi-file · extra columns OK</div>
+      {fileCount>0&&<div style={{fontSize:10,color:C.green,marginTop:4}}>✓ {fileCount} file{fileCount>1?"s":""} loaded</div>}
+      <input ref={ref} type="file" accept=".csv,.xlsx,.xls" multiple style={{display:"none"}} onChange={e=>onFiles(e.target.files)}/>
+    </div>
+  );
+}
+
+// ── Sidebar for Student View ──────────────────────────────────────────────────
+function StudentSidebar({allStudents,noCAT4Students,selectedId,onSelect,onFiles,fileCount}) {
+  const [search,setSearch]=useState("");
+  const [expandedYears,setExpandedYears]=useState(new Set());
+  const [showNoCAT4,setShowNoCAT4]=useState(false);
+
+  // Group students with CAT4 by their latest currentYear
+  const byYear = useMemo(()=>{
+    const map={};
+    allStudents.forEach(s=>{
+      const yr = s.currentYear || "Unknown";
+      if(!map[yr]) map[yr]=[];
+      map[yr].push(s);
+    });
+    Object.values(map).forEach(arr=>arr.sort((a,b)=>a.name.localeCompare(b.name)));
+    return map;
+  },[allStudents]);
+
+  const sortedYears = useMemo(()=>
+    Object.keys(byYear).sort((a,b)=>yearSortKey(a)-yearSortKey(b))
+  ,[byYear]);
+
+  // Auto-expand the year of the selected student
+  const selectedYear = useMemo(()=>{
+    for (const yr of sortedYears) {
+      if (byYear[yr].find(s=>s.id===selectedId)) return yr;
+    }
+    return null;
+  },[sortedYears,byYear,selectedId]);
+
+  // Auto-expand the year group of the selected student
+  const prevSelectedYearRef = useRef(null);
+  if (selectedYear && selectedYear !== prevSelectedYearRef.current) {
+    prevSelectedYearRef.current = selectedYear;
+  }
+  // Use a layout effect to expand without causing render issues  
+  useMemo(()=>{
+    if (selectedYear) {
+      setExpandedYears(prev => {
+        if (prev.has(selectedYear)) return prev;
+        return new Set([...prev, selectedYear]);
+      });
+    }
+  // eslint-disable-next-line
+  },[selectedYear]);
+
+  const toggleYear = (yr) => {
+    setExpandedYears(prev => {
+      const next = new Set(prev);
+      next.has(yr) ? next.delete(yr) : next.add(yr);
+      return next;
+    });
+  };
+
+  const filtered = useMemo(()=>{
+    if (!search) return null;
+    return allStudents.filter(s=>s.name.toLowerCase().includes(search.toLowerCase())).sort((a,b)=>a.name.localeCompare(b.name));
+  },[allStudents,search]);
+
+  return (
+    <div style={{width:240,minWidth:240,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflowY:"auto"}}>
+      {/* Search */}
+      <div style={{padding:"12px 12px 8px"}}>
+        <input
+          style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 11px",color:C.text,fontSize:12,outline:"none",width:"100%",boxSizing:"border-box"}}
+          placeholder="Search students…" value={search} onChange={e=>setSearch(e.target.value)}/>
+      </div>
+
+      {/* Search results */}
+      {search && (
+        <div style={{padding:"0 8px 8px",flex:1,overflowY:"auto"}}>
+          {filtered.length===0
+            ? <div style={{fontSize:12,color:C.muted,padding:"8px 4px"}}>No results</div>
+            : filtered.map(s=>{
+                const lr=[...s.rows].filter(r=>hasCAT4(r)).sort((a,b)=>new Date(b.testDate)-new Date(a.testDate))[0];
+                const avg=lr?meanSS(lr):0;
+                return (
+                  <button key={s.id} onClick={()=>onSelect(s.id)}
+                    style={{width:"100%",padding:"8px 10px",borderRadius:8,background:selectedId===s.id?C.accentSoft:"transparent",border:`1px solid ${selectedId===s.id?C.accent:"transparent"}`,cursor:"pointer",textAlign:"left",marginBottom:2}}>
+                    <div style={{fontSize:12,fontWeight:600,color:C.text}}>{s.name}</div>
+                    <div style={{fontSize:10,color:C.muted}}>{lr?.currentYear||"–"} · {lr?`SS ${avg}`:"No CAT4"}</div>
+                  </button>
+                );
+              })
+          }
+        </div>
+      )}
+
+      {/* Year group tree */}
+      {!search && (
+        <div style={{flex:1,overflowY:"auto",padding:"0 8px 8px"}}>
+          {sortedYears.map(yr=>{
+            const isOpen = expandedYears.has(yr);
+            const students = byYear[yr];
+            return (
+              <div key={yr}>
+                {/* Year header */}
+                <button onClick={()=>toggleYear(yr)}
+                  style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 10px",borderRadius:8,background:isOpen?C.accentSoft:"transparent",border:"none",cursor:"pointer",marginBottom:2}}>
+                  <span style={{fontSize:12,fontWeight:700,color:isOpen?C.accent:C.mutedLight}}>{yr}</span>
+                  <span style={{fontSize:11,color:C.muted,display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{background:C.border,borderRadius:10,padding:"1px 7px",fontSize:10}}>{students.length}</span>
+                    <span style={{fontSize:9}}>{isOpen?"▲":"▼"}</span>
+                  </span>
+                </button>
+                {/* Students in year */}
+                {isOpen && students.map(s=>{
+                  const lr=[...s.rows].filter(r=>hasCAT4(r)).sort((a,b)=>new Date(b.testDate)-new Date(a.testDate))[0];
+                  const avg=lr?meanSS(lr):0;
+                  const isSelected=selectedId===s.id;
+                  return (
+                    <button key={s.id} onClick={()=>onSelect(s.id)}
+                      style={{width:"100%",padding:"7px 10px 7px 18px",borderRadius:8,background:isSelected?C.accentSoft:"transparent",border:`1px solid ${isSelected?C.accent:"transparent"}`,cursor:"pointer",textAlign:"left",marginBottom:1}}>
+                      <div style={{fontSize:12,fontWeight:isSelected?600:400,color:isSelected?C.text:C.mutedLight,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.name}</div>
+                      <div style={{fontSize:10,color:isSelected?C.muted:"#475569"}}>SS {avg} · <span style={{color:bandColor(avg)}}>{STANINE_LABEL[ssToStanine(avg)]}</span></div>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+
+          {/* No CAT4 section */}
+          {noCAT4Students.length>0&&(
+            <div style={{marginTop:8,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
+              <button onClick={()=>setShowNoCAT4(v=>!v)}
+                style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 10px",borderRadius:8,background:showNoCAT4?"#f8717110":"transparent",border:"none",cursor:"pointer",marginBottom:2}}>
+                <span style={{fontSize:12,fontWeight:700,color:C.rose}}>No CAT4 Data</span>
+                <span style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{background:C.border,borderRadius:10,padding:"1px 7px",fontSize:10,color:C.muted}}>{noCAT4Students.length}</span>
+                  <span style={{fontSize:9,color:C.muted}}>{showNoCAT4?"▲":"▼"}</span>
+                </span>
+              </button>
+              {showNoCAT4&&noCAT4Students.map(s=>(
+                <div key={s.id} style={{padding:"6px 10px 6px 18px",borderRadius:8,marginBottom:1}}>
+                  <div style={{fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.name}</div>
+                  <div style={{fontSize:10,color:"#475569"}}>{s.currentYear}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Upload zone */}
+      <div style={{padding:"8px 12px 12px",borderTop:`1px solid ${C.border}`,marginTop:"auto"}}>
+        <UploadZone onFiles={onFiles} fileCount={fileCount}/>
+      </div>
+    </div>
+  );
+}
+
+// ── Debug Modal ───────────────────────────────────────────────────────────────
+function DebugModal({info,onClose}) {
+  if (!info) return null;
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:26,maxWidth:560,width:"90%",boxShadow:"0 24px 60px #000a",maxHeight:"80vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <span style={{fontWeight:700,fontSize:15}}>
+            {info.rowCount>0 ? `✅ ${info.rowCount} records loaded` : "⚠️ No valid rows found"}
+          </span>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:18}}>✕</button>
+        </div>
+        {info.rowCount===0&&(
+          <div style={{background:"#f8717122",border:`1px solid ${C.rose}`,borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:13,color:C.rose}}>
+            Parser couldn't find valid rows. Columns detected are shown below — check your column names match the required fields.
+          </div>
+        )}
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>Detected columns ({info.cols.length})</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:16}}>
+          {info.cols.map(c=><span key={c} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"2px 8px",fontSize:11,fontFamily:"'DM Mono',monospace"}}>{c}</span>)}
+        </div>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>Required columns</div>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <tbody>
+            {[
+              ["Name","Firstname + Lastname (auto-joined) · name · studentName"],
+              ["Current Year","currentYear · yearGroup · year · class · form"],
+              ["CAT4 Date of Test","CAT4 - Date of Test · dateOfTest · testDate"],
+              ["Verbal","CAT4 - Verbal SAS · verbal · verbalSAS"],
+              ["Non-Verbal","CAT4 - Non Verbal SAS · nonVerbal · nonVerbalSAS"],
+              ["Spatial","CAT4 - Spatial SAS · spatial · spatialSAS"],
+              ["Quantitative","CAT4 - Quantitative SAS · quantitative · quantitativeSAS"],
+            ].map(([f,n])=>(
+              <tr key={f}>
+                <td style={{padding:"5px 8px",borderBottom:`1px solid ${C.border}`,fontWeight:600,whiteSpace:"nowrap",fontSize:12}}>{f}</td>
+                <td style={{padding:"5px 8px",borderBottom:`1px solid ${C.border}`,color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:10}}>{n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button onClick={onClose} style={{marginTop:14,width:"100%",padding:"9px",borderRadius:9,background:C.accent,border:"none",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:13}}>
+          {info.rowCount>0?"View Dashboard":"Close"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Storage helpers ──────────────────────────────────────────────────────────
+const STORAGE_KEY = "cat4-dashboard-rows";
+
+async function saveToStorage(rows) {
+  try {
+    // Split into chunks to avoid localStorage 5MB limit
+    const str = JSON.stringify(rows);
+    const chunkSize = 500000;
+    const chunks = Math.ceil(str.length / chunkSize);
+    localStorage.setItem(STORAGE_KEY + '_chunks', String(chunks));
+    for (let i = 0; i < chunks; i++) {
+      localStorage.setItem(STORAGE_KEY + '_' + i, str.slice(i * chunkSize, (i+1) * chunkSize));
+    }
+  } catch(e) { console.warn("Storage save failed:", e); }
+}
+
+async function loadFromStorage() {
+  try {
+    const chunks = parseInt(localStorage.getItem(STORAGE_KEY + '_chunks') || '0');
+    if (!chunks) return null;
+    let str = '';
+    for (let i = 0; i < chunks; i++) {
+      str += localStorage.getItem(STORAGE_KEY + '_' + i) || '';
+    }
+    return str ? JSON.parse(str) : null;
+  } catch(e) { return null; }
+}
+
+async function clearStorage() {
+  try {
+    const chunks = parseInt(localStorage.getItem(STORAGE_KEY + '_chunks') || '0');
+    for (let i = 0; i < chunks; i++) localStorage.removeItem(STORAGE_KEY + '_' + i);
+    localStorage.removeItem(STORAGE_KEY + '_chunks');
+  } catch(e) {}
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+function CAT4Dashboard() {
+  const [rawRows,setRawRows]         = useState(SAMPLE_DATA);
+  const [fileCount,setFileCount]     = useState(0);
+  const [selectedId,setSelectedId]   = useState("S001");
+  const [view,setView]               = useState("student");
+  const [benchmarkMode,setBenchmark] = useState("national");
+  const [selectedCohortYear,setCohortYear] = useState(null);
+  const [debugInfo,setDebugInfo]     = useState(null);
+  const [storageStatus,setStorageStatus] = useState("loading"); // "loading"|"loaded"|"empty"|"error"
+
+  // ── Load persisted data on mount ──
+  useEffect(()=>{
+    loadFromStorage().then(saved => {
+      if (saved && saved.length > 0) {
+        setRawRows(saved);
+        const firstWithCAT4 = saved.find(r=>hasCAT4(r));
+        if (firstWithCAT4) setSelectedId(firstWithCAT4.id);
+        setStorageStatus("loaded");
+      } else {
+        setStorageStatus("empty");
+      }
+    }).catch(()=>setStorageStatus("error"));
+  },[]);
+
+  // ── Merge uploaded rows with existing, deduplicate, then save ──
+  const handleFiles = useCallback(async(files)=>{
+    if(!files||!files.length) return;
+    const {rows,detectedCols}=await parseMultipleFiles(files);
+    if(!rows.length){ setDebugInfo({cols:detectedCols,rowCount:0}); return; }
+
+    setRawRows(prev=>{
+      // Merge: keep all existing rows + add new ones, dedup by id+testDate
+      const base = storageStatus==="empty" ? [] : prev.filter(r=>r.id!=="S001"&&r.id!=="S002"&&r.id!=="S003"&&r.id!=="S004"&&r.id!=="S005"&&r.id!=="S006"&&r.id!=="S007");
+      const combined = [...base, ...rows];
+      const seen = new Set();
+      const merged = combined.filter(r=>{ const k=`${r.id}__${r.testDate}`; if(seen.has(k))return false; seen.add(k);return true; });
+      // Save merged data to storage
+      saveToStorage(merged);
+      return merged;
+    });
+
+    setFileCount(f=>f+files.length);
+    setStorageStatus("loaded");
+    const firstWithCAT4 = rows.find(r=>hasCAT4(r));
+    if(firstWithCAT4) setSelectedId(firstWithCAT4.id);
+    setDebugInfo({cols:detectedCols, rowCount:rows.length, merged:true});
+  },[storageStatus]);
+
+  const handleClearData = useCallback(async()=>{
+    if(!window.confirm("Clear all saved data and return to sample data?")) return;
+    await clearStorage();
+    setRawRows(SAMPLE_DATA);
+    setSelectedId("S001");
+    setFileCount(0);
+    setStorageStatus("empty");
+  },[]);
+
+  const liveAvg = useMemo(()=>cohortLiveAverages(rawRows.filter(hasCAT4)),[rawRows]);
+  const benchmark = benchmarkMode==="national" ? NATIONAL_NORM : liveAvg;
+  const benchmarkLabel = benchmarkMode==="national" ? "National Norm" : "School Cohort Avg";
+
+  // Build student objects grouped by id
+  const allStudentsMap = useMemo(()=>{
+    const map={};
+    rawRows.forEach(r=>{
+      if(!map[r.id]) map[r.id]={id:r.id,name:r.name,currentYear:r.currentYear,rows:[]};
+      else if(r.currentYear && r.currentYear!=="Unknown") map[r.id].currentYear=r.currentYear; // always use latest known year
+      map[r.id].rows.push(r);
+    });
+    return map;
+  },[rawRows]);
+
+  const allStudents     = useMemo(()=>Object.values(allStudentsMap).filter(s=>s.rows.some(hasCAT4)),[allStudentsMap]);
+  const noCAT4Students  = useMemo(()=>Object.values(allStudentsMap).filter(s=>!s.rows.some(hasCAT4)).map(s=>({...s,currentYear:s.rows[0]?.currentYear||"Unknown"})).sort((a,b)=>a.name.localeCompare(b.name)),[allStudentsMap]);
+
+  const currentStudent = useMemo(()=>allStudents.find(s=>s.id===selectedId)||allStudents[0],[allStudents,selectedId]);
+  const latestRow = useMemo(()=>{
+    if(!currentStudent) return null;
+    return [...currentStudent.rows].filter(hasCAT4).sort((a,b)=>new Date(b.testDate)-new Date(a.testDate))[0];
+  },[currentStudent]);
+
+  // Cohort year groups
+  const cohortYears = useMemo(()=>{
+    const map={};
+    allStudents.forEach(s=>{
+      const yr = s.currentYear || "Unknown";
+      if(!map[yr]) map[yr]=[];
+      map[yr].push(s);
+    });
+    return map;
+  },[allStudents]);
+
+  const sortedCohortYears = useMemo(()=>Object.keys(cohortYears).sort((a,b)=>yearSortKey(a)-yearSortKey(b)),[cohortYears]);
+
+  // Default to first cohort year when switching to cohort view
+  const activeCohortYear = selectedCohortYear && cohortYears[selectedCohortYear] ? selectedCohortYear : sortedCohortYears[0];
+  const cohortStudents   = activeCohortYear ? cohortYears[activeCohortYear] : allStudents;
+
+  const st = {
+    root:   {fontFamily:"'DM Sans','Segoe UI',sans-serif",background:C.bg,minHeight:"100vh",color:C.text,display:"flex",flexDirection:"column"},
+    header: {background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"12px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10},
+    logo:   {fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:C.accent},
+    body:   {display:"flex",flex:1,overflow:"hidden"},
+    main:   {flex:1,padding:22,overflowY:"auto",display:"flex",flexDirection:"column",gap:18},
+    grid2:  {display:"grid",gridTemplateColumns:"1fr 1fr",gap:16},
+    card:   {background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20},
+    cTitle: {fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:12,fontWeight:700},
+    pill:   col=>({display:"inline-block",padding:"3px 10px",borderRadius:20,background:col+"22",color:col,fontSize:12,fontWeight:600}),
+    tab:    a=>({padding:"7px 17px",borderRadius:8,border:`1px solid ${a?C.accent:C.border}`,background:a?C.accentSoft:"transparent",color:a?C.accent:C.muted,cursor:"pointer",fontSize:13,fontWeight:600,transition:"all 0.15s"}),
+  };
+
+  return (
+    <div style={st.root}>
+      <DebugModal info={debugInfo} onClose={()=>setDebugInfo(null)}/>
+
+      {/* ── Header ── */}
+      <div style={st.header}>
+        <div style={st.logo}>CAT4 <span style={{color:C.muted,fontWeight:400}}>Progress Dashboard</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          {/* Storage status badge */}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            {storageStatus==="loading" && <span style={{fontSize:11,color:C.muted}}>⏳ Loading saved data…</span>}
+            {storageStatus==="loaded"  && <span style={{fontSize:11,color:C.green,background:"#4ade8015",border:"1px solid #4ade8040",borderRadius:6,padding:"3px 8px"}}>💾 Data saved in browser</span>}
+            {storageStatus==="empty"   && <span style={{fontSize:11,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px"}}>No saved data — upload a file</span>}
+            {storageStatus==="loaded"  && (
+              <button onClick={handleClearData} style={{fontSize:11,color:C.rose,background:"transparent",border:`1px solid ${C.rose}40`,borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Clear data</button>
+            )}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:11,color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>Compare vs</span>
+            <Toggle value={benchmarkMode} onChange={setBenchmark} options={[
+              {value:"national",label:"National Norm (SS 100)"},
+              {value:"cohort",  label:"School Cohort Avg"},
+            ]}/>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button style={st.tab(view==="student")} onClick={()=>setView("student")}>Student View</button>
+            <button style={st.tab(view==="cohort")}  onClick={()=>setView("cohort")}>Cohort Overview</button>
+          </div>
+          <label style={{cursor:"pointer"}}>
+            <span style={{fontSize:12,color:C.accent,border:`1px solid ${C.accent}`,borderRadius:8,padding:"6px 14px",fontWeight:600,whiteSpace:"nowrap"}}>↑ Upload Files</span>
+            <input type="file" accept=".csv,.xlsx,.xls" multiple style={{display:"none"}} onChange={e=>handleFiles(e.target.files)}/>
+          </label>
+        </div>
+      </div>
+
+      <div style={st.body}>
+
+        {/* ── STUDENT VIEW SIDEBAR ── */}
+        {view==="student" && (
+          <StudentSidebar
+            allStudents={allStudents}
+            noCAT4Students={noCAT4Students}
+            selectedId={selectedId}
+            onSelect={id=>{setSelectedId(id);}}
+            onFiles={handleFiles}
+            fileCount={fileCount}
+          />
+        )}
+
+        {/* ── COHORT VIEW SIDEBAR ── */}
+        {view==="cohort" && (
+          <div style={{width:200,minWidth:200,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",padding:"12px 10px",gap:4,overflowY:"auto"}}>
+            <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",padding:"4px 6px 8px"}}>Year Group</div>
+            {/* All years option */}
+            <button onClick={()=>setCohortYear("__all__")}
+              style={{padding:"8px 10px",borderRadius:8,background:activeCohortYear==="__all__"||(!activeCohortYear&&!selectedCohortYear)?C.accentSoft:"transparent",border:`1px solid ${activeCohortYear==="__all__"?C.accent:"transparent"}`,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:12,fontWeight:600,color:C.text}}>All Years</span>
+              <span style={{fontSize:10,color:C.muted,background:C.border,borderRadius:10,padding:"1px 7px"}}>{allStudents.length}</span>
+            </button>
+            {sortedCohortYears.map(yr=>(
+              <button key={yr} onClick={()=>setCohortYear(yr)}
+                style={{padding:"8px 10px",borderRadius:8,background:activeCohortYear===yr?C.accentSoft:"transparent",border:`1px solid ${activeCohortYear===yr?C.accent:"transparent"}`,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:12,fontWeight:activeCohortYear===yr?700:400,color:activeCohortYear===yr?C.text:C.mutedLight}}>{yr}</span>
+                <span style={{fontSize:10,color:C.muted,background:C.border,borderRadius:10,padding:"1px 7px"}}>{cohortYears[yr].length}</span>
+              </button>
+            ))}
+            <div style={{marginTop:"auto",paddingTop:8,borderTop:`1px solid ${C.border}`}}>
+              <UploadZone onFiles={handleFiles} fileCount={fileCount}/>
+            </div>
+          </div>
+        )}
+
+        {/* ── MAIN PANEL ── */}
+        <div style={st.main}>
+
+          {/* ════ STUDENT VIEW ════ */}
+          {view==="student" && currentStudent && latestRow && (()=>{
+            const avg=meanSS(latestRow);
+            const stan=ssToStanine(avg);
+            return (
+              <>
+                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+                  <div>
+                    <h2 style={{margin:0,fontSize:24,fontWeight:700}}>{currentStudent.name}</h2>
+                    <div style={{color:C.muted,fontSize:13,marginTop:3}}>
+                      Current Year: <strong style={{color:C.text}}>{latestRow.currentYear}</strong>
+                      &nbsp;·&nbsp;{currentStudent.rows.filter(hasCAT4).length} CAT4 assessment{currentStudent.rows.filter(hasCAT4).length!==1?"s":""} on record
+                      &nbsp;·&nbsp;Benchmark: <strong style={{color:C.amber}}>{benchmarkLabel}</strong>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                    <StatPill label="Mean SS"  value={avg}  color={bandColor(avg)}/>
+                    <StatPill label="Stanine"  value={stan} color={C.accent} sub={STANINE_LABEL[stan]}/>
+                    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 16px",display:"flex",flexDirection:"column",gap:2}}>
+                      <span style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trend</span>
+                      <span style={{fontSize:22,fontWeight:700}}><TrendBadge delta={trend(currentStudent.rows)}/></span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Domain cards */}
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  {DOMAINS.map((d,i)=>{
+                    const score=latestRow[d];
+                    const diff=score!==null?score-(benchmark[d]||100):null;
+                    return (
+                      <div key={d} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",flex:"1 1 110px"}}>
+                        <div style={{fontSize:11,color:DOMAIN_COLORS[i],fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>{d}</div>
+                        <div style={{fontSize:26,fontWeight:800,fontFamily:"'DM Mono',monospace"}}>{score??("–")}</div>
+                        <div style={{fontSize:11,color:C.muted,marginTop:2}}>{score?`Stanine ${ssToStanine(score)} · ${STANINE_LABEL[ssToStanine(score)]}`:""}</div>
+                        {diff!==null&&<div style={{marginTop:5,fontSize:11,color:diff>=0?C.green:C.rose,fontWeight:600}}>{diff>=0?"+":""}{diff} vs {benchmarkMode==="national"?"norm":"cohort"}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={st.grid2}>
+                  <div style={st.card}>
+                    <div style={st.cTitle}>Cognitive Profile — vs {benchmarkLabel}</div>
+                    <RadarProfile rows={currentStudent.rows.filter(hasCAT4)} benchmark={benchmark} benchmarkLabel={benchmarkLabel}/>
+                  </div>
+                  <div style={st.card}>
+                    <div style={st.cTitle}>Score Timeline</div>
+                    {currentStudent.rows.filter(hasCAT4).length>1
+                      ? <TimelineChart rows={currentStudent.rows} benchmark={benchmark}/>
+                      : <div style={{color:C.muted,fontSize:13,paddingTop:60,textAlign:"center"}}>Only one assessment on record — upload more files to see trends.</div>
+                    }
+                  </div>
+                </div>
+
+                <div style={st.card}>
+                  <div style={st.cTitle}>Assessment History</div>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                      <thead><tr>
+                        {["CAT4 Date of Test",...DOMAINS,"Mean SS","Stanine"].map(h=>(
+                          <th key={h} style={{textAlign:"left",padding:"7px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted,fontSize:11,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {[...currentStudent.rows].filter(hasCAT4).sort((a,b)=>new Date(a.testDate)-new Date(b.testDate)).map((r,i)=>(
+                          <tr key={i}>
+                            <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}>{formatDate(r.testDate)}</td>
+                            {DOMAINS.map((d,di)=>(
+                              <td key={d} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace",color:DOMAIN_COLORS[di]}}>{r[d]??("–")}</td>
+                            ))}
+                            <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace",fontWeight:700,color:bandColor(meanSS(r))}}>{meanSS(r)}</td>
+                            <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace"}}>{ssToStanine(meanSS(r))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+
+          {/* ════ COHORT VIEW ════ */}
+          {view==="cohort" && (()=>{
+            const displayStudents = (activeCohortYear==="__all__"||!activeCohortYear) ? allStudents : cohortStudents;
+            const cohortAvg = cohortLiveAverages(displayStudents.flatMap(s=>s.rows).filter(hasCAT4));
+            return (
+              <>
+                <div>
+                  <h2 style={{margin:0,fontSize:24,fontWeight:700}}>
+                    {activeCohortYear==="__all__"||!activeCohortYear ? "All Years" : activeCohortYear}
+                  </h2>
+                  <div style={{color:C.muted,fontSize:13,marginTop:3}}>
+                    {displayStudents.length} students with CAT4 data · comparing vs <strong style={{color:C.amber}}>{benchmarkLabel}</strong>
+                  </div>
+                </div>
+
+                {/* Cohort summary pills */}
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  {DOMAINS.map((d,i)=>{
+                    const avg=cohortAvg[d]||0;
+                    const diff=avg-(benchmark[d]||100);
+                    return <StatPill key={d} label={d} value={avg} color={DOMAIN_COLORS[i]} sub={`${diff>=0?"+":""}${diff} vs ${benchmarkMode==="national"?"norm":"cohort"}`}/>;
+                  })}
+                </div>
+
+                <div style={st.card}>
+                  <div style={st.cTitle}>
+                    {activeCohortYear==="__all__"||!activeCohortYear?"All Years":activeCohortYear} — Average vs {benchmarkLabel}
+                  </div>
+                  <CohortBar students={displayStudents} benchmark={benchmark} benchmarkLabel={benchmarkLabel}/>
+                </div>
+
+                <div style={st.card}>
+                  <div style={st.cTitle}>Students — Latest Results (click to view individual)</div>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                      <thead><tr>
+                        {["Name","Current Year","CAT4 Date of Test",...DOMAINS,"Mean SS","Stanine","Band","Trend"].map(h=>(
+                          <th key={h} style={{textAlign:"left",padding:"7px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted,fontSize:11,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {displayStudents.map(s=>{
+                          const lr=[...s.rows].filter(hasCAT4).sort((a,b)=>new Date(b.testDate)-new Date(a.testDate))[0];
+                          const avg=meanSS(lr);
+                          const stan=ssToStanine(avg);
+                          const t=trend(s.rows);
+                          return (
+                            <tr key={s.id} style={{cursor:"pointer"}} onClick={()=>{setSelectedId(s.id);setView("student");}}>
+                              <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontWeight:600}}>{s.name}</td>
+                              <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted}}>{s.currentYear}</td>
+                              <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}>{formatDate(lr.testDate)}</td>
+                              {DOMAINS.map((d,i)=>(
+                                <td key={d} style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace",color:DOMAIN_COLORS[i]}}>{lr[d]??("–")}</td>
+                              ))}
+                              <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace",fontWeight:700,color:bandColor(avg)}}>{avg}</td>
+                              <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`,fontFamily:"'DM Mono',monospace"}}>{stan}</td>
+                              <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`}}><span style={st.pill(bandColor(avg))}>{STANINE_LABEL[stan]}</span></td>
+                              <td style={{padding:"9px 10px",borderBottom:`1px solid ${C.border}`}}><TrendBadge delta={t}/></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(CAT4Dashboard));
+  </script>
+</body>
+</html>
